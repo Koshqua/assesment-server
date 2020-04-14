@@ -5,7 +5,8 @@ I used docker and docker-compose to run a cluster.
 I'm running two db's in container, one db is a main mongoDB instance. 
 Second DB is used to seed first db with mongoimport, after that it shuts down. 
 Server is also running into docker container. 
-
+## AWS
+I deployed the cluster to AWS. So you can easily check how API works on http://3.15.166.154:3000/users. 
 ## How to run 
 ```
     git clone https://github.com/Koshqua/assesment-server.git
@@ -17,7 +18,7 @@ Also, ports 3000 and 27017 must be opened on host machine.
     docker-compose up
 ```
 
-## How it worsk 
+## How it works 
 GET /users - gets all the users. Can accept url params limit and page 
 The default value, if you will not provide any params is
 ```
