@@ -10,10 +10,10 @@ import (
 	"strconv"
 
 	"github.com/julienschmidt/httprouter"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"gopkg.in/mgo.v2/bson"
 )
 
 //User ...
@@ -40,9 +40,12 @@ type CreateUserHandler struct {
 type ShowUserHandler struct {
 	collection *mongo.Collection
 }
+type UpdateUserHandler struct {
+	collection *mongo.Collection
+}
 
 func main() {
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
+	clientOptions := options.Client().ApplyURI("mongodb://mongodb:27017")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
 		log.Fatalln(err)
@@ -58,6 +61,7 @@ func main() {
 	router.Handler("GET", "/users", UsersHandler{collection})
 	router.Handler("POST", "/users", CreateUserHandler{collection})
 	router.Handler("GET", "/users/:id", ShowUserHandler{collection})
+	router.Handler("PUT", "/users/:id/edit", UpdateUserHandler{collection})
 	log.Fatalln(http.ListenAndServe(":3000", router))
 }
 
@@ -101,22 +105,13 @@ func (uh UsersHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 }
 
 func (cuh CreateUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
-	ct := req.Header.Get("Content-Type")
 	var user User
-	if ct == "application/json" {
-		bs, err := ioutil.ReadAll(req.Body)
-		if err != nil {
-			http.Error(res, fmt.Sprintf("Couldn't read req body with error %s", err), http.StatusBadRequest)
-			return
-		}
-		err = json.Unmarshal(bs, &user)
-		if err != nil {
-			http.Error(res, fmt.Sprintf("Couldn't parse json with error %s", err), http.StatusBadRequest)
-			return
-		}
+	err := getUserFromReq(&user, req)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
 	}
 	var u User
-	err := cuh.collection.FindOne(context.TODO(), bson.M{"email": user.Email}).Decode(&u)
+	err = cuh.collection.FindOne(context.TODO(), bson.M{"email": user.Email}).Decode(&u)
 	if u.LastName == "" {
 		doc := bson.M{"email": user.Email, "last_name": user.LastName, "country": user.Country, "city": user.City, "gender": user.Gender, "birth_date": user.BirthDate}
 		insID, err := cuh.collection.InsertOne(context.TODO(), doc)
@@ -153,4 +148,71 @@ func (suh ShowUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 	res.Header().Add("Content-Type", "application/json")
 	res.WriteHeader(200)
 	res.Write(j)
+}
+
+func (ush UpdateUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	params := httprouter.ParamsFromContext(req.Context())
+	id := params.ByName("id")
+	objId, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		http.Error(res, fmt.Sprintf("Couldnt parse ID with err %s", err), http.StatusBadRequest)
+		return
+	}
+	var u User
+	err = getUserFromReq(&u, req)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var updUser User
+	doc := bson.D{{"$set", bson.M{"email": u.Email, "last_name": u.LastName, "country": u.Country, "city": u.City, "gender": u.Gender, "birth_date": u.BirthDate}}}
+	err = ush.collection.FindOneAndUpdate(context.TODO(), bson.M{"_id": objId}, doc).Decode(&updUser)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res.Header().Add("Content-Type", "application/json")
+	res.WriteHeader(200)
+	res.Write([]byte(updUser.ID))
+
+}
+
+func getUserFromReq(u *User, req *http.Request) error {
+	ct := req.Header.Get("Content-Type")
+	if ct == "application/json" {
+		err := userFromJSON(u, req)
+		if err != nil {
+			return err
+		}
+	}
+	if ct == "application/x-www-form-urlencoded" {
+		err := userFromForm(u, req)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func userFromJSON(u *User, req *http.Request) error {
+	bs, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		return fmt.Errorf("Couldn't read body with error %s", err)
+	}
+	err = json.Unmarshal(bs, &u)
+	if err != nil {
+		return fmt.Errorf("Couldn't read parse json with error %s", err)
+	}
+	return nil
+}
+
+func userFromForm(u *User, req *http.Request) error {
+	req.ParseForm()
+	u.BirthDate = req.FormValue("birth_date")
+	u.City = req.FormValue("city")
+	u.Country = req.FormValue("country")
+	u.Email = req.FormValue("email")
+	u.Gender = req.FormValue("gender")
+	u.LastName = req.FormValue("last_name")
+	return nil
 }
