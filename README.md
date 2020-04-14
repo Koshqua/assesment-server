@@ -14,7 +14,7 @@ After we cloned directory, from root project directory, you need to run
 Of course, to run it, you need to have docker compose installed. 
 Also, ports 3000 and 27017 must be opened on host machine. 
 ```
-docker-compose up
+    docker-compose up
 ```
 
 ## How it worsk 
