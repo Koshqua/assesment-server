@@ -7,7 +7,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"reflect"
+	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/julienschmidt/httprouter"
 	"go.mongodb.org/mongo-driver/bson"
@@ -15,6 +18,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+const dateLayout = "Monday, January 2, 2006 3:04 PM"
 
 //User ...
 type User struct {
@@ -90,17 +95,13 @@ func (uh UsersHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		http.Error(res, err.Error(), http.StatusBadRequest)
 	}
 
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Println(users[0].BirthDate)
 	j, err := json.Marshal(users)
 	if err != nil {
 		http.Error(res, fmt.Sprintf("Couldnt parse json %s", err), http.StatusBadRequest)
 		return
 	}
 	res.Header().Add("Content-Type", "application/json")
-	res.WriteHeader(200)
+	//Write automatically writes Header 200 OK
 	res.Write(j)
 }
 
@@ -109,19 +110,26 @@ func (cuh CreateUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Reques
 	err := getUserFromReq(&user, req)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = validateUser(user)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
 	}
 	var u User
 	err = cuh.collection.FindOne(context.TODO(), bson.M{"email": user.Email}).Decode(&u)
-	if u.LastName == "" {
+	if u.LastName == "" && u.Email == "" {
 		doc := bson.M{"email": user.Email, "last_name": user.LastName, "country": user.Country, "city": user.City, "gender": user.Gender, "birth_date": user.BirthDate}
 		insID, err := cuh.collection.InsertOne(context.TODO(), doc)
 		if err != nil {
 			http.Error(res, "Error occured while inserting user", http.StatusBadRequest)
 		}
-		res.WriteHeader(200)
+		//Write automatically writes Header 200 OK
 		res.Write([]byte(fmt.Sprintf("User %s was added to db", insID)))
 		return
 	} else {
+		res.WriteHeader(http.StatusBadRequest)
 		res.Write([]byte("User is already existing"))
 	}
 	if err != nil {
@@ -132,7 +140,6 @@ func (cuh CreateUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Reques
 func (suh ShowUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	params := httprouter.ParamsFromContext(req.Context())
 	id := params.ByName("id")
-	fmt.Println(id)
 	objID, _ := primitive.ObjectIDFromHex(id)
 	var u User
 	err := suh.collection.FindOne(context.TODO(), bson.M{"_id": objID}).Decode(&u)
@@ -146,7 +153,7 @@ func (suh ShowUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 		return
 	}
 	res.Header().Add("Content-Type", "application/json")
-	res.WriteHeader(200)
+	//Write automatically writes Header 200 OK
 	res.Write(j)
 }
 
@@ -164,6 +171,11 @@ func (ush UpdateUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Reques
 		http.Error(res, err.Error(), http.StatusBadRequest)
 		return
 	}
+	err = validateUser(u)
+	if err != nil {
+		http.Error(res, err.Error(), http.StatusBadRequest)
+		return
+	}
 	var updUser User
 	doc := bson.D{{"$set", bson.M{"email": u.Email, "last_name": u.LastName, "country": u.Country, "city": u.City, "gender": u.Gender, "birth_date": u.BirthDate}}}
 	err = ush.collection.FindOneAndUpdate(context.TODO(), bson.M{"_id": objId}, doc).Decode(&updUser)
@@ -172,7 +184,7 @@ func (ush UpdateUserHandler) ServeHTTP(res http.ResponseWriter, req *http.Reques
 		return
 	}
 	res.Header().Add("Content-Type", "application/json")
-	res.WriteHeader(200)
+	//Write automatically writes Header 200 OK
 	res.Write([]byte(updUser.ID))
 
 }
@@ -214,5 +226,29 @@ func userFromForm(u *User, req *http.Request) error {
 	u.Email = req.FormValue("email")
 	u.Gender = req.FormValue("gender")
 	u.LastName = req.FormValue("last_name")
+	return nil
+}
+
+func validateUser(u User) error {
+	//Checking if any field is empty
+	v := reflect.ValueOf(u)
+	for i := 1; i < v.NumField(); i++ {
+		val := v.Field(i).String()
+		if val == "" {
+			fName := v.Type().Field(i).Name
+			return fmt.Errorf("%s is empty", fName)
+		}
+	}
+	//Checking email
+	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
+	if !re.MatchString(u.Email) {
+		return fmt.Errorf("%s is not a valid email", u.Email)
+	}
+	//Checking date forma
+	_, err := time.Parse(dateLayout, u.BirthDate)
+	if err != nil {
+		return fmt.Errorf("Date %s should match the pattern %s, error %s", u.BirthDate, dateLayout, err)
+	}
+
 	return nil
 }
