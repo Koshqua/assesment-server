@@ -244,7 +244,7 @@ func validateUser(u User) error {
 	if !re.MatchString(u.Email) {
 		return fmt.Errorf("%s is not a valid email", u.Email)
 	}
-	//Checking date forma
+	//Checking date format
 	_, err := time.Parse(dateLayout, u.BirthDate)
 	if err != nil {
 		return fmt.Errorf("Date %s should match the pattern %s, error %s", u.BirthDate, dateLayout, err)
